@@ -1,0 +1,13 @@
+# Ignorar carpetas de entorno virtual
+.venv/
+env/
+venv/
+
+# Ignorar configuraciones locales de Streamlit
+.streamlit/secrets.toml
+
+# Ignorar cachés o archivos temporales
+__pycache__/
+*.pyc
+*.pyo
+*.DS_Store
