@@ -235,10 +235,6 @@ init_db()
 
 st.title("🚙 Control de vehículos por día (máx. 15 activos/día)")
 
-st.info(
-    "ℹ️ **Producción recomendada**: Postgres gestionado (Neon) con `DATABASE_URL` en Secrets."
-    "Esta app guarda cada registro asociado a una **fecha laboral (L-V)**."
-)
 
 # --- Identificación (no requiere contraseña para ver el registro de accesos) ---
 if "user" not in st.session_state:
