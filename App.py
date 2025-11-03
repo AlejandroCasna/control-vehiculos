@@ -233,7 +233,7 @@ st.set_page_config(page_title="Control de vehículos", page_icon="🚙", layout=
 
 init_db()
 
-st.title("🚙 Control de vehículos por día (máx. 15 activos/día)")
+st.title("🚙 Control de vehículos por día (máx. 10 activos/día)")
 
 
 # --- Identificación (no requiere contraseña para ver el registro de accesos) ---
@@ -288,11 +288,11 @@ with col_form:
     st.subheader("Añadir vehículo")
 
     activos = get_active_count(work_date_str)
-    st.write(f"Registros activos en {weekday_name} {d_sel.strftime('%d-%m-%Y')}: **{activos}/15**")
+    st.write(f"Registros activos en {weekday_name} {d_sel.strftime('%d-%m-%Y')}: **{activos}/10**")
 
-    disabled = (activos >= 15) or (not only_weekdays)
-    if activos >= 15:
-        st.error("Has alcanzado el máximo de 15 vehículos activos para esta fecha.")
+    disabled = (activos >= 10) or (not only_weekdays)
+    if activos >= 10:
+        st.error("Has alcanzado el máximo de 10 vehículos activos para esta fecha.")
     if not only_weekdays:
         st.warning("Selecciona una fecha de lunes a viernes para habilitar el formulario.")
 
@@ -319,7 +319,7 @@ with col_form:
             if not all(campos[k].strip() for k in ["modelo", "bastidor", "color", "comercial", "hora_prevista"]):
                 st.warning("Completa los campos obligatorios.")
             else:
-                if get_active_count(work_date_str) >= 15:
+                if get_active_count(work_date_str) >= 10:
                     st.error("Límite alcanzado para esta fecha. No se guardó.")
                 elif not only_weekdays:
                     st.error("Fecha no laboral. No se guardó.")
