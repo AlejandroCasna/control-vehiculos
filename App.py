@@ -277,7 +277,6 @@ if "user" not in st.session_state:
     st.session_state.user = None
 
 if st.session_state.user is None:
-    st.subheader("Identifícate")
     # Sidebar: selector de fecha + export público
     d_sel = selector_fecha_sidebar()
     work_date_str = d_sel.isoformat()
