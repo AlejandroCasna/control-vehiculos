@@ -275,31 +275,7 @@ def get_active_count(work_date_str: str) -> int:
             {"d": work_date_str},
         ).scalar()
         return int(cnt or 0)
-
-
-def get_active_df(work_date_str: str, tipo: str | None = None) -> pd.DataFrame:
-    base = (
-        """
-        SELECT id as ID, modelo as Modelo, bastidor as Bastidor, color as Color,
-               comercial as Comercial, hora_prevista as "Hora prevista",
-               matricula as Matrícula, comentarios as Comentarios,
-               placa as Placa, kit as Kit, alfombrillas as Alfombrillas,
-               done as Hecho,
-               tipo as Tipo, work_date as Fecha,
-               created_at as "Creado en (UTC)", created_by as "Creado por"
-        FROM vehicles
-        WHERE deleted_at IS NULL AND work_date = %s
-        """
-    )
-    if tipo:
-        query = base + " AND tipo = %s ORDER BY id DESC"
-        params = (work_date_str, tipo)
-    else:
-        query = base + " ORDER BY id DESC"
-        params = (work_date_str,)
-    return pd.read_sql(query, engine, params=params)
-
-
+        
 def get_all_df() -> pd.DataFrame:
     query = (
         """
@@ -526,69 +502,45 @@ else:
 
 
 # --- Borrado con password ---
+# --- Marcar vehículos como hechos ---
 st.divider()
-st.markdown("### Borrado con contraseña")
-with st.expander("✅ Marcar como hechos (requiere contraseña)"):
-    admin_name = st.text_input("Tu nombre (se guardará como 'hecho por')", key="mark_name")
-    admin_pass = st.text_input("Contraseña", type="password", key="mark_pwd")
+st.markdown("### ✅ Marcar vehículos como hechos")
 
-    if admin_pass == ADMIN_PASSWORD:
-        df_edit = get_active_df(work_date_str).copy()
-        if df_edit.empty:
-            st.info("No hay vehículos para esta fecha.")
-        else:
-            # 🔒 Defensa: crear columnas faltantes si no existen
-            if "Hecho" not in df_edit.columns:
-                df_edit["Hecho"] = False
-            if "Hora prevista" not in df_edit.columns:
-                df_edit["Hora prevista"] = ""
-        
-            cols_needed = ["ID", "Modelo", "Bastidor", "Hora prevista", "Hecho"]
-            cols_present = [c for c in cols_needed if c in df_edit.columns]
-            if len(cols_present) < len(cols_needed):
-                st.warning(f"Faltan columnas para editar: {set(cols_needed) - set(cols_present)}. Se usarán las disponibles.")
-            editable = df_edit[cols_present].copy()
-        
-            edited = st.data_editor(
-                editable,
-                use_container_width=True,
-                num_rows="fixed",
-                column_config={
-                    "Hecho": st.column_config.CheckboxColumn("Hecho", help="Marcar como completado"),
-                } if "Hecho" in editable.columns else {},
-                key="editor_hechos",
-            )
+# Mostramos los coches del día
+df_all = get_active_df(work_date_str)
+if df_all.empty:
+    st.info("No hay vehículos para esta fecha.")
+else:
+    st.caption("Haz clic en 'Marcar como hecho' en la fila correspondiente. Las filas hechas se muestran en verde.")
+    df_display = style_done(df_all)
+    st.dataframe(df_display, use_container_width=True, hide_index=True)
 
-            if st.button("Guardar cambios de 'Hecho'"):
-                original = editable.set_index("ID")
-                changed_ids = []
-                for _, row in edited.iterrows():
-                    vid = int(row["ID"])
-                    new_done = bool(row["Hecho"])
-                    old_done = bool(original.loc[vid, "Hecho"])
-                    if new_done != old_done:
-                        changed_ids.append((vid, new_done))
+    # Seleccionar un vehículo por ID
+    st.subheader("Marcar vehículo como hecho")
+    vehicle_id = st.number_input("ID del vehículo", min_value=1, step=1)
+    admin_pass = st.text_input("Contraseña de administrador", type="password", key="done_pass")
 
-                if changed_ids:
-                    who = (admin_name or "admin").strip()
-                    when = datetime.utcnow().isoformat()
-                    with engine.begin() as conn:
-                        for vid, new_done in changed_ids:
-                            conn.execute(
-                                text("""
-                                    UPDATE vehicles
-                                    SET done = :d,
-                                        done_at = CASE WHEN :d THEN :dt ELSE done_at END,
-                                        done_by = CASE WHEN :d THEN :by ELSE done_by END
-                                    WHERE id = :id
-                                """),
-                                {"d": new_done, "dt": when, "by": who, "id": vid},
-                            )
-                    st.success(f"Actualizados {len(changed_ids)} registro(s).")
-                    st.rerun()
-    else:
-        if admin_pass:
+    if st.button("✅ Confirmar 'Hecho'"):
+        if admin_pass != ADMIN_PASSWORD:
             st.error("Contraseña incorrecta.")
+        else:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("""
+                        UPDATE vehicles
+                        SET done = TRUE,
+                            done_at = :dt,
+                            done_by = :by
+                        WHERE id = :id
+                    """),
+                    {
+                        "dt": datetime.utcnow().isoformat(),
+                        "by": st.session_state.user or "admin",
+                        "id": vehicle_id,
+                    },
+                )
+            st.success(f"Vehículo ID {vehicle_id} marcado como hecho ✅")
+            st.rerun()
 
 
 # --- Exportación e historial de accesos ---
@@ -614,48 +566,7 @@ with st.expander("📜 Ver registro de accesos (requiere contraseña)"):
                 engine,
             )
             st.dataframe(access_df, use_container_width=True, hide_index=True)
-with st.expander("Marcar como hechos (requiere contraseña)"):
-    admin_name = st.text_input("Tu nombre (se guardará como 'hecho por')", key="mark_name")
-    admin_pass = st.text_input("Contraseña", type="password", key="mark_pwd")
-    if admin_pass == ADMIN_PASSWORD:
-        # dataframe editable con la columna Hecho
-        df_edit = get_active_df(work_date_str).copy()
-        if not df_edit.empty:
-            # Usaremos solo columnas necesarias
-            editable = df_edit[["ID", "Modelo", "Bastidor", "Hora prevista", "Hecho"]].copy()
-            edited = st.data_editor(
-                editable,
-                use_container_width=True,
-                num_rows="fixed",
-                key="editor_hechos",
-            )
-            if st.button("Guardar cambios de 'Hecho'"):
-                # Compara edited vs original
-                original = editable.set_index("ID")
-                changed_ids = []
-                for _, row in edited.iterrows():
-                    vid = int(row["ID"])
-                    new_done = bool(row["Hecho"])
-                    old_done = bool(original.loc[vid, "Hecho"])
-                    if new_done != old_done:
-                        changed_ids.append((vid, new_done))
-                if changed_ids:
-                    who = (admin_name or "admin").strip()
-                    when = datetime.utcnow().isoformat()
-                    with engine.begin() as conn:
-                        for vid, new_done in changed_ids:
-                            conn.execute(
-                                text("""
-                                    UPDATE vehicles
-                                    SET done = :d, 
-                                        done_at = CASE WHEN :d THEN :dt ELSE done_at END,
-                                        done_by = CASE WHEN :d THEN :by ELSE done_by END
-                                    WHERE id = :id
-                                """),
-                                {"d": new_done, "dt": when, "by": who, "id": vid},
-                            )
-                    st.success(f"Actualizados {len(changed_ids)} registro(s).")
-                    st.rerun()
+
         else:
             st.info("No hay vehículos para esta fecha.")
     else:
