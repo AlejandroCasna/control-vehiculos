@@ -537,16 +537,25 @@ with st.expander("✅ Marcar como hechos (requiere contraseña)"):
         if df_edit.empty:
             st.info("No hay vehículos para esta fecha.")
         else:
-            # Solo las columnas necesarias para edición
-            editable = df_edit[["ID", "Modelo", "Bastidor", "Hora prevista", "Hecho"]].copy()
-
+            # 🔒 Defensa: crear columnas faltantes si no existen
+            if "Hecho" not in df_edit.columns:
+                df_edit["Hecho"] = False
+            if "Hora prevista" not in df_edit.columns:
+                df_edit["Hora prevista"] = ""
+        
+            cols_needed = ["ID", "Modelo", "Bastidor", "Hora prevista", "Hecho"]
+            cols_present = [c for c in cols_needed if c in df_edit.columns]
+            if len(cols_present) < len(cols_needed):
+                st.warning(f"Faltan columnas para editar: {set(cols_needed) - set(cols_present)}. Se usarán las disponibles.")
+            editable = df_edit[cols_present].copy()
+        
             edited = st.data_editor(
                 editable,
                 use_container_width=True,
                 num_rows="fixed",
                 column_config={
                     "Hecho": st.column_config.CheckboxColumn("Hecho", help="Marcar como completado"),
-                },
+                } if "Hecho" in editable.columns else {},
                 key="editor_hechos",
             )
 
