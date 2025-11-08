@@ -567,9 +567,5 @@ with st.expander("📜 Ver registro de accesos (requiere contraseña)"):
             )
             st.dataframe(access_df, use_container_width=True, hide_index=True)
 
-        else:
-            st.info("No hay vehículos para esta fecha.")
-    else:
-        if admin_pass:
-            st.error("Contraseña incorrecta.")
+        
 st.caption("Hecho con ❤️ en Streamlit + SQLAlchemy. Listado público por fecha, altas por pestañas Comerciales/Industriales, límite por día y auditoría.")
