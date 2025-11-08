@@ -1,3 +1,10 @@
+# app.py (Streamlit + SQLAlchemy + Postgres/SQLite)
+# ------------------------------------------------------
+# App de control de vehículos por día laboral (L-V)
+# Cambios solicitados (nov 2025):
+# 1) Pantalla inicial pública: selector de fecha + listado de coches activos del día (no requiere login). Para añadir, sí se pide nombre.
+# 2) En pantalla de trabajo (tras login): dos apartados (Comerciales / Industriales) mediante pestañas. Campo "tipo" en BD.
+# ------------------------------------------------------
 
 import os
 from datetime import datetime, date
@@ -10,7 +17,7 @@ from sqlalchemy.engine import Engine
 # -------------------------
 # Configuración/Secrets
 # ------------------------- 
-MAX_PER_TYPE = {"Comercial": 10, "Industrial": 10}
+MAX_PER_TYPE = {"Turismo": 15, "Industrial": 15}
 
 def get_count_by_type(work_date_str: str, tipo: str) -> int:
     with engine.begin() as conn:
@@ -22,6 +29,7 @@ def get_count_by_type(work_date_str: str, tipo: str) -> int:
             {"d": work_date_str, "t": tipo},
         ).scalar()
         return int(cnt or 0)
+    
 def read_secret(name, default=None):
     v = os.getenv(name)
     if v:
@@ -118,23 +126,61 @@ DDL_ACCESS_SQLITE = text(
 def init_db():
     is_sqlite = DATABASE_URL.startswith("sqlite:")
     with engine.begin() as conn:
+        # 1) Crear tablas (según motor)
         if is_sqlite:
             conn.execute(DDL_VEHICLES_SQLITE)
             conn.execute(DDL_ACCESS_SQLITE)
         else:
             conn.execute(DDL_VEHICLES_PG)
             conn.execute(DDL_ACCESS_PG)
-        # Migraciones: asegurar columnas añadidas en versiones nuevas
-        # work_date ya intentábamos crear antes
+
+        # 2) Migraciones idempotentes (no fallan si ya existen)
+
+        # 2.1 work_date
         try:
             conn.execute(text("ALTER TABLE vehicles ADD COLUMN work_date TEXT"))
         except Exception:
             pass
-        # tipo: Comercial / Industrial
+
+        # 2.2 tipo -> asegurar columna y dejar 'Turismo' como default/valor
         try:
-            conn.execute(text("ALTER TABLE vehicles ADD COLUMN tipo TEXT DEFAULT 'Comercial'"))
+            conn.execute(text("ALTER TABLE vehicles ADD COLUMN tipo TEXT"))
         except Exception:
             pass
+        # Normaliza valores existentes
+        try:
+            conn.execute(text("UPDATE vehicles SET tipo = 'Turismo' WHERE tipo IS NULL OR tipo = 'Comercial'"))
+        except Exception:
+            pass
+        # Default sólo en Postgres (SQLite no soporta ALTER COLUMN SET DEFAULT igual)
+        if not is_sqlite:
+            try:
+                conn.execute(text("ALTER TABLE vehicles ALTER COLUMN tipo SET DEFAULT 'Turismo'"))
+            except Exception:
+                pass
+
+        # 2.3 hora_prevista nullable (sólo Postgres)
+        if not is_sqlite:
+            try:
+                conn.execute(text("ALTER TABLE vehicles ALTER COLUMN hora_prevista DROP NOT NULL"))
+            except Exception:
+                pass
+        # En SQLite ya la definimos como TEXT (sin NOT NULL) en el DDL.
+
+        # 2.4 columnas nuevas de check y “hecho”
+        for coldef in [
+            "placa BOOLEAN DEFAULT FALSE",
+            "kit BOOLEAN DEFAULT FALSE",
+            "alfombrillas BOOLEAN DEFAULT FALSE",
+            "done BOOLEAN DEFAULT FALSE",
+            "done_at TEXT",
+            "done_by TEXT",
+        ]:
+            try:
+                conn.execute(text(f"ALTER TABLE vehicles ADD COLUMN {coldef}"))
+            except Exception:
+                pass
+
 
 # -------------------------
 # Utilidades
@@ -167,27 +213,33 @@ def log_access(username: str):
 def insert_vehicle(data: dict, user: str, work_date_str: str, tipo: str):
     with engine.begin() as conn:
         conn.execute(
-            text(
-                """
-                INSERT INTO vehicles(
-                    modelo, bastidor, color, comercial, hora_prevista, matricula, comentarios, work_date, tipo, created_at, created_by
-                ) VALUES (:modelo, :bastidor, :color, :comercial, :hora_prevista, :matricula, :comentarios, :work_date, :tipo, :created_at, :created_by)
-                """
-            ),
-            {
-                "modelo": data["modelo"].strip(),
-                "bastidor": data["bastidor"].strip(),
-                "color": data["color"].strip(),
-                "comercial": data["comercial"].strip(),
-                "hora_prevista": (data["hora_prevista"].strip() if data.get("hora_prevista") else None),
-                "matricula": (data["matricula"] or "").strip(),
-                "comentarios": (data["comentarios"] or "").strip(),
-                "work_date": work_date_str,
-                "tipo": (tipo or "Comercial"),
-                "created_at": datetime.utcnow().isoformat(),
-                "created_by": user,
-            },
+            text("""
+                    INSERT INTO vehicles(
+                    modelo, bastidor, color, comercial, hora_prevista, matricula, comentarios,
+                    work_date, tipo, placa, kit, alfombrillas, done, created_at, created_by
+                    ) VALUES (
+                    :modelo, :bastidor, :color, :comercial, :hora_prevista, :matricula, :comentarios,
+                    :work_date, :tipo, :placa, :kit, :alfombrillas, FALSE, :created_at, :created_by
+                    )
+                    """),
+                    {
+                    "modelo": data["modelo"].strip(),
+                    "bastidor": data["bastidor"].strip(),
+                    "color": data["color"].strip(),
+                    "comercial": data["comercial"].strip(),
+                    "hora_prevista": (data["hora_prevista"].strip() if data.get("hora_prevista") else None),
+                    "matricula": (data["matricula"] or "").strip(),
+                    "comentarios": (data["comentarios"] or "").strip(),
+                    "work_date": work_date_str,
+                    "tipo": tipo or "Turismo",
+                    "placa": bool(data.get("placa")),
+                    "kit": bool(data.get("kit")),
+                    "alfombrillas": bool(data.get("alfombrillas")),
+                    "created_at": datetime.utcnow().isoformat(),
+                    "created_by": user,
+                    }
         )
+
 
 
 def get_active_count(work_date_str: str) -> int:
@@ -205,6 +257,8 @@ def get_active_df(work_date_str: str, tipo: str | None = None) -> pd.DataFrame:
         SELECT id as ID, modelo as Modelo, bastidor as Bastidor, color as Color,
                comercial as Comercial, hora_prevista as "Hora prevista",
                matricula as Matrícula, comentarios as Comentarios,
+               placa as Placa, kit as Kit, alfombrillas as Alfombrillas,
+               done as Hecho,
                tipo as Tipo, work_date as Fecha,
                created_at as "Creado en (UTC)", created_by as "Creado por"
         FROM vehicles
@@ -277,6 +331,7 @@ if "user" not in st.session_state:
     st.session_state.user = None
 
 if st.session_state.user is None:
+    st.subheader("Identifícate")
     # Sidebar: selector de fecha + export público
     d_sel = selector_fecha_sidebar()
     work_date_str = d_sel.isoformat()
@@ -317,37 +372,44 @@ weekday_name = es_weekday_name(d_sel)
 
 col_info = st.container()
 with col_info:
-    count_c = get_count_by_type(work_date_str, "Comercial")
+    count_t = get_count_by_type(work_date_str, "Turismo")
     count_i = get_count_by_type(work_date_str, "Industrial")
-    total = count_c + count_i
+    total = count_t + count_i
     st.write(
         f"Registros {weekday_name} {d_sel.strftime('%d-%m-%Y')}: "
-        f"**Comerciales {count_c}/{MAX_PER_TYPE['Comercial']}** · "
+        f"**Turismo {count_t}/{MAX_PER_TYPE['Turismo']}** · "
         f"**Industriales {count_i}/{MAX_PER_TYPE['Industrial']}** · "
         f"Total {total}"
     )
 
 # Pestañas para tipos
-pest_comercial, pest_industrial = st.tabs(["🚗 Comerciales", "🚛 Industriales"])
+pest_turismo, pest_industrial = st.tabs(["🚘 Turismo", "🚛 Industriales"])
+
 
 # --- Apartado: Comerciales ---
-with pest_comercial:
-    count_c = get_count_by_type(work_date_str, "Comercial")
-    disabled = (count_c >= MAX_PER_TYPE["Comercial"]) or (not is_weekday(d_sel))
-    st.caption(f"Comerciales activos hoy: {count_c}/{MAX_PER_TYPE['Comercial']}")
+with pest_turismo:
+    count_t = get_count_by_type(work_date_str, "Turismo")
+    disabled = (count_t >= MAX_PER_TYPE["Turismo"]) or (not is_weekday(d_sel))
+    st.caption(f"Turismo activos hoy: {count_t}/{MAX_PER_TYPE['Turismo']}")
     if not is_weekday(d_sel):
         st.warning("Selecciona una fecha de lunes a viernes para habilitar el formulario.")
 
-    with st.form("form_add_comercial", clear_on_submit=True):
-        st.subheader("Añadir vehículo comercial")
-        modelo = st.text_input("Modelo", disabled=disabled, key="mod_c")
-        bastidor = st.text_input("Bastidor", disabled=disabled, key="bas_c")
-        color = st.text_input("Color", disabled=disabled, key="col_c")
-        comercial_name = st.text_input("Comercial", disabled=disabled, key="com_c")
-        hora_prevista = st.text_input("Hora prevista", placeholder="Ej: 10:30 o 2025-11-02 10:30", disabled=disabled, key="hor_c")
-        matricula = st.text_input("Matrícula (opcional)", disabled=disabled, key="mat_c")
-        comentarios = st.text_area("Comentarios (opcional)", disabled=disabled, key="coments_c")
-        submitted = st.form_submit_button("Guardar (Comercial)", disabled=disabled)
+    with st.form("form_add_turismo", clear_on_submit=True):
+        st.subheader("Añadir vehículo (Turismo)")
+        modelo = st.text_input("Modelo", disabled=disabled, key="mod_t")
+        bastidor = st.text_input("Bastidor", disabled=disabled, key="bas_t")
+        color = st.text_input("Color", disabled=disabled, key="col_t")
+        comercial_name = st.text_input("Comercial", disabled=disabled, key="com_t")
+        hora_prevista = st.text_input("Hora prevista", placeholder="Ej: 10:30 o 2025-11-02 10:30", disabled=disabled, key="hor_t")
+        matricula = st.text_input("Matrícula (opcional)", disabled=disabled, key="mat_t")
+        comentarios = st.text_area("Comentarios (opcional)", disabled=disabled, key="coments_t")
+
+        # ✅ los checkboxes deben ir ANTES del submit (para que se guarden)
+        placa = st.checkbox("Placa", value=False, disabled=disabled, key="placa_t")
+        kit = st.checkbox("Kit", value=False, disabled=disabled, key="kit_t")
+        alfombrillas = st.checkbox("Alfombrillas", value=False, disabled=disabled, key="alf_t")
+
+        submitted = st.form_submit_button("Guardar (Turismo)", disabled=disabled)
         if submitted:
             campos = {
                 "modelo": modelo or "",
@@ -357,26 +419,29 @@ with pest_comercial:
                 "hora_prevista": hora_prevista or "",
                 "matricula": matricula or "",
                 "comentarios": comentarios or "",
+                "placa": placa,
+                "kit": kit,
+                "alfombrillas": alfombrillas,
             }
-            if not all(campos[k].strip() for k in ["modelo", "bastidor", "color", "comercial", ]):
+            if not all(campos[k].strip() for k in ["modelo", "bastidor", "color", "comercial"]):
                 st.warning("Completa los campos obligatorios.")
-            elif get_count_by_type(work_date_str, "Comercial") >= MAX_PER_TYPE["Comercial"]:
+            elif get_count_by_type(work_date_str, "Turismo") >= MAX_PER_TYPE["Turismo"]:
                 st.error("Límite alcanzado para esta fecha. No se guardó.")
             else:
-                insert_vehicle(campos, st.session_state.user, work_date_str, "Comercial")
-                st.success("Vehículo comercial guardado.")
+                insert_vehicle(campos, st.session_state.user, work_date_str, "Turismo")
+                st.success("Vehículo (Turismo) guardado.")
                 st.rerun()
 
-    st.markdown("### Comerciales activos en la fecha")
-    df_c = get_active_df(work_date_str, "Comercial")
-    st.dataframe(df_c, use_container_width=True, hide_index=True)
+    st.markdown("### Turismo activos en la fecha")
+    df_t = get_active_df(work_date_str, "Turismo")
+    st.dataframe(df_t, use_container_width=True, hide_index=True)
+
 
 # --- Apartado: Industriales ---
 with pest_industrial:
     count_i = get_count_by_type(work_date_str, "Industrial")
     disabled = (count_i >= MAX_PER_TYPE["Industrial"]) or (not is_weekday(d_sel))
     st.caption(f"Industriales activos hoy: {count_i}/{MAX_PER_TYPE['Industrial']}")
-
     if not is_weekday(d_sel):
         st.warning("Selecciona una fecha de lunes a viernes para habilitar el formulario.")
 
@@ -389,6 +454,11 @@ with pest_industrial:
         hora_prevista = st.text_input("Hora prevista", placeholder="Ej: 10:30 o 2025-11-02 10:30", disabled=disabled, key="hor_i")
         matricula = st.text_input("Matrícula (opcional)", disabled=disabled, key="mat_i")
         comentarios = st.text_area("Comentarios (opcional)", disabled=disabled, key="coments_i")
+
+        placa_i = st.checkbox("Placa", value=False, disabled=disabled, key="placa_i")
+        kit_i = st.checkbox("Kit", value=False, disabled=disabled, key="kit_i")
+        alfombrillas_i = st.checkbox("Alfombrillas", value=False, disabled=disabled, key="alf_i")
+
         submitted = st.form_submit_button("Guardar (Industrial)", disabled=disabled)
         if submitted:
             campos = {
@@ -399,8 +469,11 @@ with pest_industrial:
                 "hora_prevista": hora_prevista or "",
                 "matricula": matricula or "",
                 "comentarios": comentarios or "",
+                "placa": placa_i,
+                "kit": kit_i,
+                "alfombrillas": alfombrillas_i,
             }
-            if not all(campos[k].strip() for k in ["modelo", "bastidor", "color", "comercial", ]):
+            if not all(campos[k].strip() for k in ["modelo", "bastidor", "color", "comercial"]):
                 st.warning("Completa los campos obligatorios.")
             elif get_count_by_type(work_date_str, "Industrial") >= MAX_PER_TYPE["Industrial"]:
                 st.error("Límite alcanzado para esta fecha. No se guardó.")
@@ -412,6 +485,7 @@ with pest_industrial:
     st.markdown("### Industriales activos en la fecha")
     df_i = get_active_df(work_date_str, "Industrial")
     st.dataframe(df_i, use_container_width=True, hide_index=True)
+
 
 # --- Borrado con password ---
 st.divider()
@@ -453,5 +527,51 @@ with st.expander("📜 Ver registro de accesos (requiere contraseña)"):
                 engine,
             )
             st.dataframe(access_df, use_container_width=True, hide_index=True)
-
+with st.expander("Marcar como hechos (requiere contraseña)"):
+    admin_name = st.text_input("Tu nombre (se guardará como 'hecho por')", key="mark_name")
+    admin_pass = st.text_input("Contraseña", type="password", key="mark_pwd")
+    if admin_pass == ADMIN_PASSWORD:
+        # dataframe editable con la columna Hecho
+        df_edit = get_active_df(work_date_str).copy()
+        if not df_edit.empty:
+            # Usaremos solo columnas necesarias
+            editable = df_edit[["ID", "Modelo", "Bastidor", "Hora prevista", "Hecho"]].copy()
+            edited = st.data_editor(
+                editable,
+                use_container_width=True,
+                num_rows="fixed",
+                key="editor_hechos",
+            )
+            if st.button("Guardar cambios de 'Hecho'"):
+                # Compara edited vs original
+                original = editable.set_index("ID")
+                changed_ids = []
+                for _, row in edited.iterrows():
+                    vid = int(row["ID"])
+                    new_done = bool(row["Hecho"])
+                    old_done = bool(original.loc[vid, "Hecho"])
+                    if new_done != old_done:
+                        changed_ids.append((vid, new_done))
+                if changed_ids:
+                    who = (admin_name or "admin").strip()
+                    when = datetime.utcnow().isoformat()
+                    with engine.begin() as conn:
+                        for vid, new_done in changed_ids:
+                            conn.execute(
+                                text("""
+                                    UPDATE vehicles
+                                    SET done = :d, 
+                                        done_at = CASE WHEN :d THEN :dt ELSE done_at END,
+                                        done_by = CASE WHEN :d THEN :by ELSE done_by END
+                                    WHERE id = :id
+                                """),
+                                {"d": new_done, "dt": when, "by": who, "id": vid},
+                            )
+                    st.success(f"Actualizados {len(changed_ids)} registro(s).")
+                    st.rerun()
+        else:
+            st.info("No hay vehículos para esta fecha.")
+    else:
+        if admin_pass:
+            st.error("Contraseña incorrecta.")
 st.caption("Hecho con ❤️ en Streamlit + SQLAlchemy. Listado público por fecha, altas por pestañas Comerciales/Industriales, límite por día y auditoría.")
