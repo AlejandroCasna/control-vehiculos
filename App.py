@@ -1,10 +1,11 @@
-# app.py (Streamlit + SQLAlchemy + Postgres/SQLite)
-# ------------------------------------------------------
-# App de control de vehículos por día laboral (L-V)
-# Cambios solicitados (nov 2025):
-# 1) Pantalla inicial pública: selector de fecha + listado de coches activos del día (no requiere login). Para añadir, sí se pide nombre.
-# 2) En pantalla de trabajo (tras login): dos apartados (Comerciales / Industriales) mediante pestañas. Campo "tipo" en BD.
-# ------------------------------------------------------
+
+
+def style_done(df: pd.DataFrame):
+    if df.empty or "Hecho" not in df.columns:
+        return df
+    def _row_style(row):
+        return ['background-color: #e8ffe8'] * len(row) if bool(row.get("Hecho", False)) else [''] * len(row)
+    return df.style.apply(_row_style, axis=1)
 
 import os
 from datetime import datetime, date
@@ -338,11 +339,12 @@ if st.session_state.user is None:
 
     # Listado público del día seleccionado (sin login)
     st.markdown("### Vehículos activos del día seleccionado (público)")
-    df_public = get_active_df(work_date_str)
-    if df_public.empty:
-        st.info("No hay vehículos activos para esta fecha.")
-    else:
-        st.dataframe(df_public, use_container_width=True, hide_index=True)
+df_public = get_active_df(work_date_str)
+if df_public.empty:
+    st.info("No hay vehículos activos para esta fecha.")
+else:
+    st.caption("Las filas en verde están marcadas como 'Hecho'.")
+    st.dataframe(style_done(df_public), use_container_width=True, hide_index=True)
 
     st.divider()
     username = st.text_input("Tu nombre (se registrará en el acceso y en altas)")
@@ -434,7 +436,11 @@ with pest_turismo:
 
     st.markdown("### Turismo activos en la fecha")
     df_t = get_active_df(work_date_str, "Turismo")
-    st.dataframe(df_t, use_container_width=True, hide_index=True)
+if df_t.empty:
+    st.info("No hay turismo para esta fecha.")
+else:
+    st.caption("Verde = 'Hecho'")
+    st.dataframe(style_done(df_t), use_container_width=True, hide_index=True)
 
 
 # --- Apartado: Industriales ---
@@ -483,26 +489,73 @@ with pest_industrial:
                 st.rerun()
 
     st.markdown("### Industriales activos en la fecha")
-    df_i = get_active_df(work_date_str, "Industrial")
-    st.dataframe(df_i, use_container_width=True, hide_index=True)
+df_i = get_active_df(work_date_str, "Industrial")
+
+
+
+if df_i.empty:
+    st.info("No hay industriales para esta fecha.")
+else:
+    st.caption("Verde = 'Hecho'")
+    st.dataframe(style_done(df_i), use_container_width=True, hide_index=True)
 
 
 # --- Borrado con password ---
 st.divider()
 st.markdown("### Borrado con contraseña")
-with st.expander("Borrar un vehículo (borrado lógico, requiere contraseña)"):
-    vehicle_id = st.number_input("ID a borrar", min_value=1, step=1)
-    reason = st.text_input("Motivo del borrado")
-    admin_pass = st.text_input("Contraseña de administrador", type="password")
-    if st.button("Borrar (lógico)"):
-        if not reason.strip():
-            st.warning("Debes indicar un motivo.")
-        elif admin_pass != ADMIN_PASSWORD:
-            st.error("Contraseña incorrecta.")
+with st.expander("✅ Marcar como hechos (requiere contraseña)"):
+    admin_name = st.text_input("Tu nombre (se guardará como 'hecho por')", key="mark_name")
+    admin_pass = st.text_input("Contraseña", type="password", key="mark_pwd")
+
+    if admin_pass == ADMIN_PASSWORD:
+        df_edit = get_active_df(work_date_str).copy()
+        if df_edit.empty:
+            st.info("No hay vehículos para esta fecha.")
         else:
-            soft_delete_vehicle(int(vehicle_id), st.session_state.user, reason)
-            st.success("Vehículo marcado como borrado. (No se elimina físicamente)")
-            st.rerun()
+            # Solo las columnas necesarias para edición
+            editable = df_edit[["ID", "Modelo", "Bastidor", "Hora prevista", "Hecho"]].copy()
+
+            edited = st.data_editor(
+                editable,
+                use_container_width=True,
+                num_rows="fixed",
+                column_config={
+                    "Hecho": st.column_config.CheckboxColumn("Hecho", help="Marcar como completado"),
+                },
+                key="editor_hechos",
+            )
+
+            if st.button("Guardar cambios de 'Hecho'"):
+                original = editable.set_index("ID")
+                changed_ids = []
+                for _, row in edited.iterrows():
+                    vid = int(row["ID"])
+                    new_done = bool(row["Hecho"])
+                    old_done = bool(original.loc[vid, "Hecho"])
+                    if new_done != old_done:
+                        changed_ids.append((vid, new_done))
+
+                if changed_ids:
+                    who = (admin_name or "admin").strip()
+                    when = datetime.utcnow().isoformat()
+                    with engine.begin() as conn:
+                        for vid, new_done in changed_ids:
+                            conn.execute(
+                                text("""
+                                    UPDATE vehicles
+                                    SET done = :d,
+                                        done_at = CASE WHEN :d THEN :dt ELSE done_at END,
+                                        done_by = CASE WHEN :d THEN :by ELSE done_by END
+                                    WHERE id = :id
+                                """),
+                                {"d": new_done, "dt": when, "by": who, "id": vid},
+                            )
+                    st.success(f"Actualizados {len(changed_ids)} registro(s).")
+                    st.rerun()
+    else:
+        if admin_pass:
+            st.error("Contraseña incorrecta.")
+
 
 # --- Exportación e historial de accesos ---
 st.sidebar.divider()
