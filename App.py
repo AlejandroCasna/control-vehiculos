@@ -364,7 +364,7 @@ if st.session_state.user is None:
 
     # Listado público del día seleccionado (sin login)
     st.markdown("### Vehículos activos del día seleccionado (público)")
-df_public = get_active_df(work_date_str)
+    df_public = get_active_df(work_date_str)
 if df_public.empty:
     st.info("No hay vehículos activos para esta fecha.")
 else:
