@@ -1,12 +1,5 @@
 
 
-def style_done(df: pd.DataFrame):
-    if df.empty or "Hecho" not in df.columns:
-        return df
-    def _row_style(row):
-        return ['background-color: #e8ffe8'] * len(row) if bool(row.get("Hecho", False)) else [''] * len(row)
-    return df.style.apply(_row_style, axis=1)
-
 import os
 from datetime import datetime, date
 
@@ -14,6 +7,13 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+
+def style_done(df: pd.DataFrame):
+    if df.empty or "Hecho" not in df.columns:
+        return df
+    def _row_style(row):
+        return ['background-color: #e8ffe8'] * len(row) if bool(row.get("Hecho", False)) else [''] * len(row)
+    return df.style.apply(_row_style, axis=1)
 
 # -------------------------
 # Configuración/Secrets
