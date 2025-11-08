@@ -1,5 +1,7 @@
 
 
+
+
 import os
 from datetime import datetime, date
 
@@ -8,13 +10,36 @@ import streamlit as st
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+
+
+def get_active_df(work_date_str: str, tipo: str | None = None) -> pd.DataFrame:
+    base = (
+        """
+        SELECT id as ID, modelo as Modelo, bastidor as Bastidor, color as Color,
+               comercial as Comercial, hora_prevista as "Hora prevista",
+               matricula as Matrícula, comentarios as Comentarios,
+               placa as Placa, kit as Kit, alfombrillas as Alfombrillas,
+               done as Hecho,
+               tipo as Tipo, work_date as Fecha,
+               created_at as "Creado en (UTC)", created_by as "Creado por"
+        FROM vehicles
+        WHERE deleted_at IS NULL AND work_date = %s
+        """
+    )
+    if tipo:
+        query = base + " AND tipo = %s ORDER BY id DESC"
+        params = (work_date_str, tipo)
+    else:
+        query = base + " ORDER BY id DESC"
+        params = (work_date_str,)
+    return pd.read_sql(query, engine, params=params)
+
 def style_done(df: pd.DataFrame):
     if df.empty or "Hecho" not in df.columns:
         return df
     def _row_style(row):
         return ['background-color: #e8ffe8'] * len(row) if bool(row.get("Hecho", False)) else [''] * len(row)
     return df.style.apply(_row_style, axis=1)
-
 # -------------------------
 # Configuración/Secrets
 # ------------------------- 
