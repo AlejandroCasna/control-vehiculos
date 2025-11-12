@@ -266,6 +266,31 @@ def soft_delete_vehicle(vehicle_id: int, admin_user: str, reason: str):
 
 # =========================
 # UI
+def normaliza_columnas(df: pd.DataFrame) -> pd.DataFrame:
+    # Mapea por nombre en minúscula -> nombre canónico
+    mapa = {
+        "id": "ID",
+        "modelo": "Modelo",
+        "bastidor": "Bastidor",
+        "color": "Color",
+        "comercial": "Comercial",
+        "hora prevista": "Hora prevista",
+        "matricula": "Matrícula",
+        "matrícula": "Matrícula",
+        "comentarios": "Comentarios",
+        "placa": "Placa",
+        "kit": "Kit",
+        "alfombrillas": "Alfombrillas",
+        "hecho": "Hecho",
+        "tipo": "Tipo",
+        "fecha": "Fecha",
+        "work_date": "Fecha",
+        "creado en (utc)": "Creado en (UTC)",
+        "creado por": "Creado por",
+    }
+    ren = {c: mapa.get(c.lower(), c) for c in df.columns}
+    return df.rename(columns=ren)
+
 # =========================
 st.set_page_config(page_title="Control de vehículos", page_icon="🚚", layout="wide")
 init_db()
@@ -279,7 +304,7 @@ def selector_fecha_sidebar():
         st.sidebar.error("Solo se permiten fechas de lunes a viernes.")
     return d_sel
 
-st.title("🚚 Control de vehículos por día (máx. 15 en total)")
+st.title("🚚 Control de vehículos por día (máx. 15 coches/día)")
 
 # ---- PANTALLA 1 (pública)
 if "user" not in st.session_state:
