@@ -468,6 +468,7 @@ with st.expander("📜 Ver registro de accesos (requiere contraseña)"):
 st.divider()
 with st.expander("🔐 Admin – marcar coches terminados (todos los días)"):
     admin_pass_admin = st.text_input("Contraseña de administrador", type="password", key="admin_panel_pwd")
+
     if admin_pass_admin != ADMIN_PASSWORD:
         if admin_pass_admin:
             st.error("Contraseña incorrecta.")
@@ -503,26 +504,58 @@ with st.expander("🔐 Admin – marcar coches terminados (todos los días)"):
         st.dataframe(df_admin, use_container_width=True, hide_index=True)
 
     st.markdown("#### Editar estado 'Hecho'")
-    editable_cols = [c for c in ["ID", "Modelo", "Bastidor", "Hora prevista", "Hecho", "Tipo", "Fecha"] if c in df_admin.columns]
-    editable = df_admin[editable_cols].copy()
+
+    # Preparamos solo las columnas necesarias
+    cols_needed = ["ID", "Modelo", "Bastidor", "Hora prevista", "Hecho", "Tipo", "Fecha"]
+    editable_cols = [c for c in cols_needed if c in df_admin.columns]
+    df_editable = df_admin[editable_cols].copy()
+
+    # Aseguramos existencia de Hecho (por si acaso)
+    if "Hecho" not in df_editable.columns:
+        df_editable["Hecho"] = False
+
+    # ✅ Usamos ID como índice ANTES del editor para no depender de que siga en columns
+    if "ID" in df_editable.columns:
+        df_editable = df_editable.set_index("ID", drop=True)
+    else:
+        # Si por alguna razón no vino ID, no podemos editar con seguridad
+        st.error("No se encontró la columna ID en los datos del administrador.")
+        st.stop()
+
+    # Guardamos original para diff (solo la columna Hecho)
+    original_done = df_editable["Hecho"].astype(bool).copy()
 
     edited = st.data_editor(
-        editable,
+        df_editable,
         use_container_width=True,
         num_rows="fixed",
-        column_config={"Hecho": st.column_config.CheckboxColumn("Hecho", help="Marcar como completado")} if "Hecho" in editable.columns else {},
+        column_config={
+            "Hecho": st.column_config.CheckboxColumn("Hecho", help="Marcar como completado"),
+        },
+        disabled=[c for c in df_editable.columns if c != "Hecho"],  # solo editable "Hecho"
         key="admin_editor_hechos",
     )
 
     if st.button("💾 Guardar cambios", key="save_done"):
-        original = editable.set_index("ID")
-        cambios = []
-        for _, row in edited.iterrows():
-            vid = int(row["ID"])
-            new_done = bool(row.get("Hecho", False))
-            old_done = bool(original.loc[vid, "Hecho"]) if "Hecho" in original.columns else False
-            if new_done != old_done:
-                cambios.append((vid, new_done))
+        # Alineamos índices (pueden venir como str)
+        def _coerce_idx(idx):
+            try:
+                return idx.astype(int)
+            except Exception:
+                return idx
+
+        orig_idx  = _coerce_idx(original_done.index)
+        edit_idx  = _coerce_idx(edited.index)
+
+        original_done.index = orig_idx
+        edited_done = edited["Hecho"].astype(bool).copy()
+        edited_done.index = edit_idx
+
+        # Calculamos cambios donde ID esté en ambas series
+        intersect_ids = [i for i in edited_done.index if i in original_done.index]
+        cambios = [(int(i), bool(edited_done.loc[i]))
+                   for i in intersect_ids
+                   if bool(edited_done.loc[i]) != bool(original_done.loc[i])]
 
         if not cambios:
             st.info("No hay cambios que guardar.")
@@ -531,14 +564,15 @@ with st.expander("🔐 Admin – marcar coches terminados (todos los días)"):
             when = datetime.utcnow().isoformat()
             with engine.begin() as conn:
                 for vid, new_done in cambios:
-                    conn.execute(text("""
-                        UPDATE vehicles
-                        SET done = :d,
-                            done_at = CASE WHEN :d THEN :dt ELSE done_at END,
-                            done_by = CASE WHEN :d THEN :by ELSE done_by END
-                        WHERE id = :id AND deleted_at IS NULL
-                    """), {"d": new_done, "dt": when, "by": who, "id": vid})
+                    conn.execute(
+                        text("""
+                            UPDATE vehicles
+                            SET done = :d,
+                                done_at = CASE WHEN :d THEN :dt ELSE done_at END,
+                                done_by = CASE WHEN :d THEN :by ELSE done_by END
+                            WHERE id = :id AND deleted_at IS NULL
+                        """),
+                        {"d": new_done, "dt": when, "by": who, "id": vid},
+                    )
             st.success(f"Guardados {len(cambios)} cambio(s).")
             st.rerun()
-
-st.caption("Hecho con ❤️ en Streamlit + SQLAlchemy.")
