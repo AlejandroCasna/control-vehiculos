@@ -517,6 +517,7 @@ with st.expander("🔐 Admin – marcar coches terminados (todos los días)"):
     tipo_arg  = None if tipo_sel == "Todos" else tipo_sel
 
     df_admin = get_active_all_df(date_from=date_from, date_to=date_to, tipo=tipo_arg)
+    df_admin = normaliza_columnas(df_admin)
 
     if df_admin.empty:
         st.info("No hay coches activos con esos filtros.")
