@@ -50,7 +50,7 @@ def get_active_df(work_date_str: str, tipo: str | None = None) -> pd.DataFrame:
         params = {"d": work_date_str}
 
 
-    return pd.read_sql(text(query), engine, params=params)
+    return pd.read_sql(query, engine, params=params)
 
 
 
@@ -305,7 +305,8 @@ def get_active_all_df(
     order = " ORDER BY work_date DESC, id DESC"
     query = base + " " + " ".join(conds) + order
 
-    return pd.read_sql(text(query), engine, params=params)
+    
+    return pd.read_sql(query, engine, params=tuple(params))
 
 
 # ============================================================
