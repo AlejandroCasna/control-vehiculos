@@ -12,6 +12,8 @@ from sqlalchemy.engine import Engine
 #  Helpers de consulta: listado por día + estilo "Hecho"
 # ============================================================
 
+from sqlalchemy import text   # ya lo tienes importado arriba
+
 def get_active_df(work_date_str: str, tipo: str | None = None) -> pd.DataFrame:
     """
     Devuelve los vehículos activos (no borrados) de una fecha concreta.
@@ -38,16 +40,18 @@ def get_active_df(work_date_str: str, tipo: str | None = None) -> pd.DataFrame:
             created_by AS "Creado por"
         FROM vehicles
         WHERE deleted_at IS NULL
-          AND work_date = %s
+          AND work_date = :d
     """
     if tipo:
-        query = base + " AND tipo = %s ORDER BY id DESC"
-        params = (work_date_str, tipo)
+        query = base + " AND tipo = :t ORDER BY id DESC"
+        params = {"d": work_date_str, "t": tipo}
     else:
         query = base + " ORDER BY id DESC"
-        params = (work_date_str,)
+        params = {"d": work_date_str}
 
-    return pd.read_sql(query, engine, params=params)
+
+    return pd.read_sql(text(query), engine, params=params)
+
 
 
 def style_done(df: pd.DataFrame):
@@ -282,24 +286,27 @@ def get_active_all_df(
         FROM vehicles
         WHERE deleted_at IS NULL
           AND (done IS NULL OR done = 0)
-          AND work_date <= %s
+          AND work_date <= :today
     """
+
     conds = []
-    params: list = [today_str]
+    params: dict = {"today": today_str}
 
     if date_from:
-        conds.append("AND work_date >= %s")
-        params.append(date_from)
+        conds.append("AND work_date >= :dfrom")
+        params["dfrom"] = date_from
     if date_to:
-        conds.append("AND work_date <= %s")
-        params.append(date_to)
+        conds.append("AND work_date <= :dto")
+        params["dto"] = date_to
     if tipo and tipo in ("Turismo", "Industrial"):
-        conds.append("AND tipo = %s")
-        params.append(tipo)
+        conds.append("AND tipo = :tipo")
+        params["tipo"] = tipo
 
     order = " ORDER BY work_date DESC, id DESC"
-    query = base + " ".join(conds) + order
-    return pd.read_sql(query, engine, params=tuple(params))
+    query = base + " " + " ".join(conds) + order
+
+    return pd.read_sql(text(query), engine, params=params)
+
 
 # ============================================================
 #  Operaciones de datos
