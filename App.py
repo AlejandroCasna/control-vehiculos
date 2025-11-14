@@ -466,7 +466,7 @@ if st.session_state.user is None:
             st.session_state.user = username.strip()
             log_access(st.session_state.user)
             st.success(f"Bienvenido, {st.session_state.user}! Acceso registrado.")
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.warning("Escribe un nombre válido.")
     st.stop()
@@ -478,7 +478,7 @@ with st.sidebar:
     st.caption(f"Conectado como: **{st.session_state.user}**")
     if st.button("Cambiar de usuario"):
         st.session_state.user = None
-        st.experimental_rerun()
+        st.rerun()
 
 d_sel = selector_fecha_sidebar()
 work_date_str = d_sel.isoformat()
@@ -557,7 +557,7 @@ with pest_turismo:
             }
             insert_vehicle(campos, st.session_state.user, work_date_str, "Turismo")
             st.success("Vehículo (Turismo) guardado.")
-            st.experimental_rerun()
+            st.rerun()
 
     st.markdown("### Turismos activos en la fecha")
     df_t = get_active_df(work_date_str, "Turismo")
@@ -627,7 +627,7 @@ with pest_industrial:
             }
             insert_vehicle(campos, st.session_state.user, work_date_str, "Industrial")
             st.success("Vehículo industrial guardado.")
-            st.experimental_rerun()
+            st.rerun()
 
     st.markdown("### Industriales activos en la fecha")
     df_i = get_active_df(work_date_str, "Industrial")
@@ -752,6 +752,6 @@ with st.expander("🔐 Admin – Kit Flota / marcar coches terminados"):
                         who = (st.session_state.user or "admin").strip()
                         update_done_flags(cambios, who)
                         st.success(f"Guardados {len(cambios)} cambio(s).")
-                        st.experimental_rerun()
+                        st.rerun()
 
 st.caption("Hecho con ❤️ en Streamlit + SQLAlchemy + Neon.")
